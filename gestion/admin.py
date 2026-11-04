@@ -2,8 +2,10 @@ from django.contrib import admin
 from .models import (
     Rol,
     Empleado,
-    Usuario,
     UsuarioRol,
+    Categoria,
+    Unidad,
+    Producto,
     Proveedor,
     ProveedorProducto,
     OrdCompra,
@@ -31,8 +33,10 @@ from .models import (
 admin.site.register([
     Rol,
     Empleado,
-    Usuario,
     UsuarioRol,
+    Categoria,
+    Unidad,
+    Producto,
     Proveedor,
     ProveedorProducto,
     OrdCompra,

@@ -38,10 +38,10 @@ Inicio
 {% for producto in recientes %}
 <a href="{{ producto.get_absolute_url }}">
 <span>
-<strong>{{ producto.nombre }}</strong>
-<small>{{ producto.categoria }} · {{ producto.codigo }}</small>
+<strong>{{ producto.nombre_producto }}</strong>
+<small>{{ producto.id_categoria }} · {{ producto.codigo_barra }}</small>
 </span>
-<span>{{ producto.stock }} unidades</span>
+<span>{{ producto.stock_actual }} unidades</span>
 </a>{% empty %}<div class="vacio">
 <h2>El catálogo está listo para empezar</h2>
 <p>

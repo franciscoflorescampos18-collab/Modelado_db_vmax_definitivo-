@@ -34,6 +34,8 @@ INSTALLED_APPS = [
     "inicio",
     "axes",
     "gestion",
+    'rest_framework',
+    'api',
 ]
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
@@ -135,7 +137,17 @@ AXES_LOCKOUT_PARAMETERS = ["username"]
 AXES_CLIENT_IP_CALLABLE = "cuentas.seguridad.sin_ip"
 AXES_LOCKOUT_TEMPLATE = "cuentas/bloqueo.html"
 
+
 # Se limita por cuenta, independientemente de IP, navegador y cookies.
 # Así no se bloquea a toda el aula que comparte una IP. La prueba de bloqueo
 # cambia esos datos y confirma que no eluden el límite. W006 exige siempre IP.
 SILENCED_SYSTEM_CHECKS = ["axes.W006"]
+
+REST_FRAMEWORK = {
+    "DEFAULT_AUTHENTICATION_CLASSES": [
+        "rest_framework.authentication.SessionAuthentication",
+    ],
+    "DEFAULT_PERMISSION_CLASSES": [
+        "rest_framework.permissions.IsAuthenticated",
+    ],
+}

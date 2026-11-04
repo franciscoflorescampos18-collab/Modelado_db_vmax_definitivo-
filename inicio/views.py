@@ -1,8 +1,10 @@
+
 from django.contrib.auth.decorators import login_required
 from django.db import connection
 from django.http import JsonResponse
 from django.shortcuts import render
-from catalogo.models import Producto, Categoria
+
+from gestion.models import Producto, Categoria
 from cuentas.models import Usuario
 
 
@@ -19,9 +21,9 @@ def home(request):
                 if request.user.is_superuser
                 else None
             ),
-            "recientes": Producto.objects.select_related("categoria").order_by(
-                "-actualizado"
-            )[:5],
+            "recientes": Producto.objects.select_related(
+                "id_categoria"
+            ).order_by("-fecha_actualizacion")[:5],
         },
     )
 
@@ -32,4 +34,5 @@ def salud(request):
             cursor.execute("SELECT 1")
     except Exception:
         return JsonResponse({"estado": "no disponible"}, status=503)
+
     return JsonResponse({"estado": "ok"})

@@ -1,7 +1,8 @@
 from django.contrib import messages
 from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin
 from django.db import IntegrityError, transaction
-from django.db.models import Q, ProtectedError
+from django.db.models import Q
+from django.db.models import ProtectedError
 from django.urls import reverse_lazy
 from django.views.generic import (
     ListView,
@@ -10,13 +11,9 @@ from django.views.generic import (
     UpdateView,
     DeleteView,
 )
+
+from gestion.models import Producto, Categoria
 from .forms import ProductoForm, CategoriaForm
-from .models import Producto, Categoria
-
-
-class SoloAdministradorMixin(LoginRequiredMixin, UserPassesTestMixin):
-    def test_func(self):
-        return self.request.user.is_superuser
 
 
 class GuardadoSeguroMixin:
@@ -27,12 +24,17 @@ class GuardadoSeguroMixin:
         except IntegrityError:
             form.add_error(
                 None,
-                "No se pudo guardar: otro registro usa esos datos o cambió una relación. Revisá e intentá de nuevo.",
+                "No se pudo guardar. Revisá los datos e intentá nuevamente.",
             )
             return self.form_invalid(form)
+
         messages.success(self.request, "Cambios guardados.")
         return response
 
+
+# ============================================================
+# PRODUCTOS
+# ============================================================
 
 class ProductoListView(LoginRequiredMixin, ListView):
     model = Producto
@@ -40,10 +42,19 @@ class ProductoListView(LoginRequiredMixin, ListView):
     paginate_by = 12
 
     def get_queryset(self):
-        qs = super().get_queryset().select_related("categoria")
+        qs = super().get_queryset().select_related(
+            "id_categoria",
+            "id_unidad",
+        )
+
         q = self.request.GET.get("q", "").strip()[:100]
+
         if q:
-            qs = qs.filter(Q(nombre__icontains=q) | Q(codigo__icontains=q))
+            qs = qs.filter(
+                Q(nombre_producto__icontains=q)
+                | Q(codigo_barra__icontains=q)
+            )
+
         return qs
 
 
@@ -73,15 +84,30 @@ class ProductoUpdateView(LoginRequiredMixin, GuardadoSeguroMixin, UpdateView):
         return super().form_valid(form)
 
 
-class ProductoDeleteView(SoloAdministradorMixin, DeleteView):
+class ProductoDeleteView(LoginRequiredMixin, DeleteView):
     model = Producto
     template_name = "catalogo/confirmar_baja.html"
     success_url = reverse_lazy("catalogo:lista")
 
     def form_valid(self, form):
-        messages.success(self.request, "Producto eliminado.")
-        return super().form_valid(form)
+        try:
+            with transaction.atomic():
+                response = super().form_valid(form)
+        except ProtectedError:
+            messages.error(
+                self.request,
+                "No se puede eliminar un producto que tiene movimientos, "
+                "compras o ventas relacionados.",
+            )
+            return self.get(self.request)
 
+        messages.success(self.request, "Producto eliminado.")
+        return response
+
+
+# ============================================================
+# CATEGORÍAS
+# ============================================================
 
 class CategoriaListView(LoginRequiredMixin, ListView):
     model = Categoria
@@ -89,21 +115,21 @@ class CategoriaListView(LoginRequiredMixin, ListView):
     paginate_by = 20
 
 
-class CategoriaCreateView(SoloAdministradorMixin, GuardadoSeguroMixin, CreateView):
+class CategoriaCreateView(LoginRequiredMixin, GuardadoSeguroMixin, CreateView):
     model = Categoria
     form_class = CategoriaForm
     template_name = "catalogo/categoria_form.html"
     success_url = reverse_lazy("catalogo:categorias")
 
 
-class CategoriaUpdateView(SoloAdministradorMixin, GuardadoSeguroMixin, UpdateView):
+class CategoriaUpdateView(LoginRequiredMixin, GuardadoSeguroMixin, UpdateView):
     model = Categoria
     form_class = CategoriaForm
     template_name = "catalogo/categoria_form.html"
     success_url = reverse_lazy("catalogo:categorias")
 
 
-class CategoriaDeleteView(SoloAdministradorMixin, DeleteView):
+class CategoriaDeleteView(LoginRequiredMixin, DeleteView):
     model = Categoria
     template_name = "catalogo/confirmar_baja.html"
     success_url = reverse_lazy("catalogo:categorias")
@@ -113,10 +139,11 @@ class CategoriaDeleteView(SoloAdministradorMixin, DeleteView):
             with transaction.atomic():
                 response = super().form_valid(form)
         except ProtectedError:
-            form.add_error(
-                None,
-                "No se puede eliminar una categoría con productos. Reasignalos primero.",
+            messages.error(
+                self.request,
+                "No se puede eliminar una categoría que tiene productos.",
             )
-            return self.form_invalid(form)
+            return self.get(self.request)
+
         messages.success(self.request, "Categoría eliminada.")
         return response

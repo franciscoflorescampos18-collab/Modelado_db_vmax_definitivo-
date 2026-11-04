@@ -2,17 +2,20 @@ from django.conf import settings
 from django.core.validators import MinValueValidator
 from django.db import models
 from django.db.models import Q
+from django.db.models.functions import Lower
 
-from catalogo.models import Producto
 
-# ==========================================================
-# PERSONAL Y USUARIOS
-# ==========================================================
+# ============================================================
+# EMPLEADOS Y ROLES
+# ============================================================
 
 class Rol(models.Model):
     id_rol = models.AutoField(primary_key=True)
     nombre_rol = models.CharField(max_length=150, unique=True)
     descripcion_rol = models.TextField(blank=True)
+
+    def __str__(self):
+        return self.nombre_rol
 
     class Meta:
         db_table = "roles"
@@ -20,83 +23,63 @@ class Rol(models.Model):
         verbose_name_plural = "Roles"
         ordering = ["nombre_rol"]
 
-    def __str__(self):
-        return self.nombre_rol
-
 
 class Empleado(models.Model):
     id_empleado = models.AutoField(primary_key=True)
+    cuenta_usuario = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="empleado_vmax",
+    )
     nombre_empleado = models.CharField(max_length=150)
     apellido_empleado = models.CharField(max_length=150)
     dni_empleado = models.CharField(max_length=15, unique=True)
-    telefono_empleado = models.CharField(max_length=20)
-    email_empleado = models.EmailField(max_length=150)
+    telefono_empleado = models.CharField(max_length=20, blank=True)
+    email_empleado = models.EmailField(max_length=150, blank=True)
     fecha_alta_empleado = models.DateField(null=True, blank=True)
     fecha_baja_empleado = models.DateField(null=True, blank=True)
     estado_empleado = models.BooleanField(default=True)
+
+    def __str__(self):
+        return f"{self.apellido_empleado}, {self.nombre_empleado}"
 
     class Meta:
         db_table = "empleados"
         verbose_name = "Empleado"
         verbose_name_plural = "Empleados"
         ordering = ["apellido_empleado", "nombre_empleado"]
-
-    def __str__(self):
-        return f"{self.apellido_empleado}, {self.nombre_empleado}"
-
-
-class Usuario(models.Model):
-    id_usuario = models.AutoField(primary_key=True)
-
-    id_empleado = models.ForeignKey(
-        Empleado,
-        on_delete=models.RESTRICT,
-        db_column="id_empleado",
-        related_name="usuarios",
-    )
-
-    # Vinculación con la cuenta de autenticación del proyecto.
-    cuenta_django = models.OneToOneField(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name="perfil_vmax",
-    )
-
-    nombre_usuario = models.CharField(max_length=150, unique=True)
-    fecha_creacion_usu = models.DateTimeField(null=True, blank=True)
-    activo = models.BooleanField(default=True)
-
-    class Meta:
-        db_table = "usuarios"
-        verbose_name = "Usuario"
-        verbose_name_plural = "Usuarios"
-        ordering = ["nombre_usuario"]
-
-    def __str__(self):
-        return self.nombre_usuario
+        constraints = [
+            models.CheckConstraint(
+                condition=(
+                    Q(fecha_baja_empleado__isnull=True)
+                    | Q(fecha_alta_empleado__isnull=True)
+                    | Q(fecha_baja_empleado__gte=models.F("fecha_alta_empleado"))
+                ),
+                name="chk_empleado_fechas_coherentes",
+            ),
+        ]
 
 
 class UsuarioRol(models.Model):
     id_usuario_rol = models.AutoField(primary_key=True)
-
     id_usuario = models.ForeignKey(
-        Usuario,
+        settings.AUTH_USER_MODEL,
         on_delete=models.RESTRICT,
         db_column="id_usuario",
         related_name="asignaciones_rol",
     )
-
     id_rol = models.ForeignKey(
         Rol,
         on_delete=models.RESTRICT,
         db_column="id_rol",
-        related_name="asignaciones_usuario",
     )
-
     fecha_asignacion = models.DateField()
     fecha_baja_rol = models.DateField(null=True, blank=True)
+
+    def __str__(self):
+        return f"{self.id_usuario} - {self.id_rol}"
 
     class Meta:
         db_table = "usuarios_roles"
@@ -105,34 +88,177 @@ class UsuarioRol(models.Model):
         ordering = ["-fecha_asignacion"]
         constraints = [
             models.UniqueConstraint(
-                fields=["id_usuario", "id_rol", "fecha_asignacion"],
-                name="usuario_rol_fecha_unicos",
-            )
+                fields=["id_usuario", "id_rol"],
+                condition=Q(fecha_baja_rol__isnull=True),
+                name="uq_usuario_rol_activo",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    Q(fecha_baja_rol__isnull=True)
+                    | Q(fecha_baja_rol__gte=models.F("fecha_asignacion"))
+                ),
+                name="chk_usuario_rol_fechas_coherentes",
+            ),
         ]
 
+
+# ============================================================
+# CATEGORÍAS, UNIDADES Y PRODUCTOS
+# ============================================================
+
+class Categoria(models.Model):
+    id_categoria = models.AutoField(primary_key=True)
+    nombre_categoria = models.CharField(max_length=150)
+    descripcion_categoria = models.TextField(blank=True)
+
     def __str__(self):
-        return f"{self.id_usuario} - {self.id_rol}"
+        return self.nombre_categoria
+
+    class Meta:
+        db_table = "categorias"
+        verbose_name = "Categoría"
+        verbose_name_plural = "Categorías"
+        ordering = ["nombre_categoria"]
+        constraints = [
+            models.UniqueConstraint(
+                Lower("nombre_categoria"),
+                name="uq_categoria_nombre_sin_mayusculas",
+            ),
+        ]
 
 
-# ==========================================================
+class Unidad(models.Model):
+    id_unidad = models.AutoField(primary_key=True)
+    nombre_unidad = models.CharField(max_length=150)
+    abreviatura_unidad = models.CharField(max_length=10)
+
+    def __str__(self):
+        return self.nombre_unidad
+
+    class Meta:
+        db_table = "unidades"
+        verbose_name = "Unidad"
+        verbose_name_plural = "Unidades"
+        ordering = ["nombre_unidad"]
+        constraints = [
+            models.UniqueConstraint(
+                Lower("nombre_unidad"),
+                name="uq_unidad_nombre_sin_mayusculas",
+            ),
+        ]
+
+
+class Producto(models.Model):
+    id_producto = models.AutoField(primary_key=True)
+
+    id_categoria = models.ForeignKey(
+        Categoria,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        db_column="id_categoria",
+        related_name="productos",
+    )
+
+    id_unidad = models.ForeignKey(
+        Unidad,
+        on_delete=models.RESTRICT,
+        db_column="id_unidad",
+        related_name="productos",
+    )
+
+    codigo_barra = models.CharField(
+        max_length=50,
+        unique=True,
+        null=True,
+        blank=True,
+    )
+
+    nombre_producto = models.CharField(max_length=150)
+    descripcion_producto = models.TextField(blank=True)
+
+    precio_producto = models.DecimalField(
+        max_digits=13,
+        decimal_places=2,
+        validators=[MinValueValidator(0)],
+    )
+
+    stock_actual = models.DecimalField(
+        max_digits=13,
+        decimal_places=3,
+        default=0,
+        validators=[MinValueValidator(0)],
+    )
+
+    stock_minimo = models.DecimalField(
+        max_digits=13,
+        decimal_places=3,
+        default=0,
+        validators=[MinValueValidator(0)],
+    )
+
+    creado_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="productos_creados",
+    )
+
+    actualizado_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="productos_actualizados",
+    )
+
+    fecha_creacion = models.DateTimeField(auto_now_add=True)
+    fecha_actualizacion = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return self.nombre_producto
+
+    class Meta:
+        db_table = "productos"
+        verbose_name = "Producto"
+        verbose_name_plural = "Productos"
+        ordering = ["nombre_producto"]
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(precio_producto__gte=0),
+                name="chk_producto_precio_no_negativo",
+            ),
+            models.CheckConstraint(
+                condition=Q(stock_actual__gte=0),
+                name="chk_producto_stock_no_negativo",
+            ),
+            models.CheckConstraint(
+                condition=Q(stock_minimo__gte=0),
+                name="chk_producto_stock_min_no_negativo",
+            ),
+        ]
+
+
+# ============================================================
 # PROVEEDORES Y COMPRAS
-# ==========================================================
+# ============================================================
 
 class Proveedor(models.Model):
     id_proveedor = models.AutoField(primary_key=True)
     razon_social_proveedor = models.CharField(max_length=150)
     cuit_proveedor = models.CharField(max_length=30, unique=True)
-    telefono_proveedor = models.CharField(max_length=20)
-    email_proveedor = models.EmailField(max_length=150)
+    telefono_proveedor = models.CharField(max_length=20, blank=True)
+    email_proveedor = models.EmailField(max_length=150, blank=True)
+
+    def __str__(self):
+        return self.razon_social_proveedor
 
     class Meta:
         db_table = "proveedores"
         verbose_name = "Proveedor"
         verbose_name_plural = "Proveedores"
         ordering = ["razon_social_proveedor"]
-
-    def __str__(self):
-        return self.razon_social_proveedor
 
 
 class ProveedorProducto(models.Model):
@@ -158,6 +284,9 @@ class ProveedorProducto(models.Model):
         validators=[MinValueValidator(0)],
     )
 
+    def __str__(self):
+        return f"{self.id_proveedor} - {self.id_producto}"
+
     class Meta:
         db_table = "proveedores_productos"
         verbose_name = "Producto de Proveedor"
@@ -166,12 +295,9 @@ class ProveedorProducto(models.Model):
         constraints = [
             models.UniqueConstraint(
                 fields=["id_proveedor", "id_producto"],
-                name="proveedor_producto_unico",
-            )
+                name="uq_proveedor_producto",
+            ),
         ]
-
-    def __str__(self):
-        return f"{self.id_proveedor} - {self.id_producto}"
 
 
 class OrdCompra(models.Model):
@@ -183,27 +309,25 @@ class OrdCompra(models.Model):
 
     id_ord_compra = models.AutoField(primary_key=True)
     fecha_emision_orden = models.DateField()
-
     estado_orden = models.CharField(
         max_length=30,
         choices=Estado.choices,
         default=Estado.PENDIENTE,
     )
-
     total_orden = models.DecimalField(
         max_digits=13,
         decimal_places=2,
         validators=[MinValueValidator(0)],
     )
 
+    def __str__(self):
+        return f"Orden {self.id_ord_compra}"
+
     class Meta:
         db_table = "ords_compra"
         verbose_name = "Orden de Compra"
         verbose_name_plural = "Órdenes de Compra"
         ordering = ["-fecha_emision_orden"]
-
-    def __str__(self):
-        return f"Orden {self.id_ord_compra}"
 
 
 class DetOrdCompra(models.Model):
@@ -229,14 +353,30 @@ class DetOrdCompra(models.Model):
         validators=[MinValueValidator(0.001)],
     )
 
+    precio_unitario_orden = models.DecimalField(
+        max_digits=13,
+        decimal_places=2,
+        validators=[MinValueValidator(0)],
+    )
+
+    def __str__(self):
+        return f"Detalle Orden Compra {self.id_det_ord_compra}"
+
     class Meta:
         db_table = "detalles_ord_compra"
         verbose_name = "Detalle de Orden de Compra"
         verbose_name_plural = "Detalles de Órdenes de Compra"
         ordering = ["id_det_ord_compra"]
-
-    def __str__(self):
-        return f"Detalle Orden Compra {self.id_det_ord_compra}"
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(cantidad_pedida__gt=0),
+                name="chk_det_ord_compra_cantidad_positiva",
+            ),
+            models.CheckConstraint(
+                condition=Q(precio_unitario_orden__gte=0),
+                name="chk_det_ord_compra_precio_no_negativo",
+            ),
+        ]
 
 
 class Compra(models.Model):
@@ -257,23 +397,21 @@ class Compra(models.Model):
     )
 
     fecha_hora_compra = models.DateTimeField()
-
     total_compra = models.DecimalField(
         max_digits=13,
         decimal_places=2,
         validators=[MinValueValidator(0)],
     )
+    num_factura_compra = models.CharField(max_length=30, blank=True)
 
-    num_factura_compra = models.CharField(max_length=30)
+    def __str__(self):
+        return f"Compra {self.id_compra}"
 
     class Meta:
         db_table = "compras"
         verbose_name = "Compra"
         verbose_name_plural = "Compras"
         ordering = ["-fecha_hora_compra"]
-
-    def __str__(self):
-        return f"Compra {self.id_compra}"
 
 
 class DetCompra(models.Model):
@@ -311,37 +449,51 @@ class DetCompra(models.Model):
         validators=[MinValueValidator(0)],
     )
 
+    def __str__(self):
+        return f"Detalle Compra {self.id_det_compra}"
+
     class Meta:
         db_table = "detalles_compra"
         verbose_name = "Detalle de Compra"
         verbose_name_plural = "Detalles de Compra"
         ordering = ["id_det_compra"]
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(cantidad__gt=0),
+                name="chk_det_compra_cantidad_positiva",
+            ),
+            models.CheckConstraint(
+                condition=Q(costo_unit_compra__gte=0),
+                name="chk_det_compra_costo_no_negativo",
+            ),
+            models.CheckConstraint(
+                condition=Q(subtotal_compra__gte=0),
+                name="chk_det_compra_subtotal_no_negativo",
+            ),
+        ]
 
-    def __str__(self):
-        return f"Detalle Compra {self.id_det_compra}"
 
-
-# ==========================================================
+# ============================================================
 # CLIENTES Y VENTAS
-# ==========================================================
+# ============================================================
 
 class Cliente(models.Model):
     id_cliente = models.AutoField(primary_key=True)
     nombre_cliente = models.CharField(max_length=150)
     apellido_cliente = models.CharField(max_length=150)
     dni_cliente = models.CharField(max_length=15, unique=True)
-    telefono_cliente = models.CharField(max_length=20)
+    telefono_cliente = models.CharField(max_length=20, blank=True)
     email_cliente = models.EmailField(max_length=150, null=True, blank=True)
     activo = models.BooleanField(default=True)
+
+    def __str__(self):
+        return f"{self.apellido_cliente}, {self.nombre_cliente}"
 
     class Meta:
         db_table = "clientes"
         verbose_name = "Cliente"
         verbose_name_plural = "Clientes"
         ordering = ["apellido_cliente", "nombre_cliente"]
-
-    def __str__(self):
-        return f"{self.apellido_cliente}, {self.nombre_cliente}"
 
 
 class Venta(models.Model):
@@ -371,14 +523,14 @@ class Venta(models.Model):
         validators=[MinValueValidator(0)],
     )
 
+    def __str__(self):
+        return f"Venta {self.id_venta}"
+
     class Meta:
         db_table = "ventas"
         verbose_name = "Venta"
         verbose_name_plural = "Ventas"
         ordering = ["-fecha_hora_venta"]
-
-    def __str__(self):
-        return f"Venta {self.id_venta}"
 
 
 class DetVenta(models.Model):
@@ -416,14 +568,123 @@ class DetVenta(models.Model):
         validators=[MinValueValidator(0)],
     )
 
+    def __str__(self):
+        return f"Detalle Venta {self.id_det_venta}"
+
     class Meta:
         db_table = "detalles_venta"
         verbose_name = "Detalle de Venta"
         verbose_name_plural = "Detalles de Venta"
         ordering = ["id_det_venta"]
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(cantidad__gt=0),
+                name="chk_det_venta_cantidad_positiva",
+            ),
+            models.CheckConstraint(
+                condition=Q(precio_unit_venta__gte=0),
+                name="chk_det_venta_precio_no_negativo",
+            ),
+            models.CheckConstraint(
+                condition=Q(subtotal_venta__gte=0),
+                name="chk_det_venta_subtotal_no_negativo",
+            ),
+        ]
+
+
+# ============================================================
+# MÉTODOS DE PAGO Y COMPROBANTES
+# ============================================================
+
+class MetodoPago(models.Model):
+    id_metodo_pago = models.AutoField(primary_key=True)
+    nombre_metodo_pago = models.CharField(max_length=150)
+    descripcion_metodo_pago = models.TextField(blank=True)
 
     def __str__(self):
-        return f"Detalle Venta {self.id_det_venta}"
+        return self.nombre_metodo_pago
+
+    class Meta:
+        db_table = "metodos_pago"
+        verbose_name = "Método de Pago"
+        verbose_name_plural = "Métodos de Pago"
+        ordering = ["nombre_metodo_pago"]
+
+
+class VentaMetodoPago(models.Model):
+    id_venta_met_pago = models.AutoField(primary_key=True)
+
+    id_venta = models.ForeignKey(
+        Venta,
+        on_delete=models.CASCADE,
+        db_column="id_venta",
+        related_name="pagos",
+    )
+
+    id_metodo_pago = models.ForeignKey(
+        MetodoPago,
+        on_delete=models.RESTRICT,
+        db_column="id_metodo_pago",
+    )
+
+    monto_abonado = models.DecimalField(
+        max_digits=13,
+        decimal_places=2,
+        validators=[MinValueValidator(0.01)],
+    )
+
+    def __str__(self):
+        return f"Pago Venta {self.id_venta_met_pago}"
+
+    class Meta:
+        db_table = "ventas_metodos_pago"
+        verbose_name = "Venta - Método de Pago"
+        verbose_name_plural = "Ventas - Métodos de Pago"
+        ordering = ["id_venta_met_pago"]
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(monto_abonado__gt=0),
+                name="chk_venta_met_pago_monto_positivo",
+            ),
+        ]
+
+
+class CompraMetodoPago(models.Model):
+    id_compra_met_pago = models.AutoField(primary_key=True)
+
+    id_compra = models.ForeignKey(
+        Compra,
+        on_delete=models.CASCADE,
+        db_column="id_compra",
+        related_name="pagos",
+    )
+
+    id_metodo_pago = models.ForeignKey(
+        MetodoPago,
+        on_delete=models.RESTRICT,
+        db_column="id_metodo_pago",
+    )
+
+    monto_pagado = models.DecimalField(
+        max_digits=13,
+        decimal_places=2,
+        validators=[MinValueValidator(0.01)],
+    )
+
+    def __str__(self):
+        return f"Pago Compra {self.id_compra_met_pago}"
+
+    class Meta:
+        db_table = "compras_metodos_pago"
+        verbose_name = "Compra - Método de Pago"
+        verbose_name_plural = "Compras - Métodos de Pago"
+        ordering = ["id_compra_met_pago"]
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(monto_pagado__gt=0),
+                name="chk_compra_met_pago_monto_positivo",
+            ),
+        ]
 
 
 class Comprobante(models.Model):
@@ -441,7 +702,6 @@ class Comprobante(models.Model):
         related_name="comprobantes",
     )
 
-    # Se conserva como texto libre, según lo definido.
     tipo_comprobante = models.CharField(max_length=50)
 
     estado_comprobante = models.CharField(
@@ -451,7 +711,10 @@ class Comprobante(models.Model):
     )
 
     fecha_generacion_comprobante = models.DateTimeField()
-    ruta_archivo = models.CharField(max_length=300)
+    ruta_archivo = models.CharField(max_length=300, blank=True)
+
+    def __str__(self):
+        return f"Comprobante {self.id_comprobante}"
 
     class Meta:
         db_table = "comprobantes"
@@ -459,98 +722,10 @@ class Comprobante(models.Model):
         verbose_name_plural = "Comprobantes"
         ordering = ["-fecha_generacion_comprobante"]
 
-    def __str__(self):
-        return f"Comprobante {self.id_comprobante}"
 
-
-# ==========================================================
-# MÉTODOS DE PAGO
-# ==========================================================
-
-class MetodoPago(models.Model):
-    id_metodo_pago = models.AutoField(primary_key=True)
-    nombre_metodo_pago = models.CharField(max_length=150, unique=True)
-    descripcion_metodo_pago = models.TextField(blank=True)
-
-    class Meta:
-        db_table = "metodos_pago"
-        verbose_name = "Método de Pago"
-        verbose_name_plural = "Métodos de Pago"
-        ordering = ["nombre_metodo_pago"]
-
-    def __str__(self):
-        return self.nombre_metodo_pago
-
-
-class VentaMetodoPago(models.Model):
-    id_venta_met_pago = models.AutoField(primary_key=True)
-
-    id_venta = models.ForeignKey(
-        Venta,
-        on_delete=models.CASCADE,
-        db_column="id_venta",
-        related_name="pagos",
-    )
-
-    id_metodo_pago = models.ForeignKey(
-        MetodoPago,
-        on_delete=models.RESTRICT,
-        db_column="id_metodo_pago",
-        related_name="pagos_venta",
-    )
-
-    monto_abonado = models.DecimalField(
-        max_digits=13,
-        decimal_places=2,
-        validators=[MinValueValidator(0.01)],
-    )
-
-    class Meta:
-        db_table = "ventas_metodos_pago"
-        verbose_name = "Venta - Método de Pago"
-        verbose_name_plural = "Ventas - Métodos de Pago"
-        ordering = ["id_venta_met_pago"]
-
-    def __str__(self):
-        return f"Pago Venta {self.id_venta_met_pago}"
-
-
-class CompraMetodoPago(models.Model):
-    id_compra_met_pago = models.AutoField(primary_key=True)
-
-    id_compra = models.ForeignKey(
-        Compra,
-        on_delete=models.CASCADE,
-        db_column="id_compra",
-        related_name="pagos",
-    )
-
-    id_metodo_pago = models.ForeignKey(
-        MetodoPago,
-        on_delete=models.RESTRICT,
-        db_column="id_metodo_pago",
-        related_name="pagos_compra",
-    )
-
-    monto_pagado = models.DecimalField(
-        max_digits=13,
-        decimal_places=2,
-        validators=[MinValueValidator(0.01)],
-    )
-
-    class Meta:
-        db_table = "compras_metodos_pago"
-        verbose_name = "Compra - Método de Pago"
-        verbose_name_plural = "Compras - Métodos de Pago"
-        ordering = ["id_compra_met_pago"]
-
-    def __str__(self):
-        return f"Pago Compra {self.id_compra_met_pago}"
-
-
-# ==========================================================
-# CAJA
-# ==========================================================
+# ============================================================
+# CAJA Y MOVIMIENTOS DE CAJA
+# ============================================================
 
 class TipoMovCaja(models.Model):
     class Naturaleza(models.TextChoices):
@@ -565,14 +740,14 @@ class TipoMovCaja(models.Model):
         choices=Naturaleza.choices,
     )
 
+    def __str__(self):
+        return self.nombre_tipo_mov_caja
+
     class Meta:
         db_table = "tipos_mov_caja"
         verbose_name = "Tipo de Movimiento de Caja"
         verbose_name_plural = "Tipos de Movimiento de Caja"
         ordering = ["nombre_tipo_mov_caja"]
-
-    def __str__(self):
-        return self.nombre_tipo_mov_caja
 
 
 class Caja(models.Model):
@@ -583,7 +758,7 @@ class Caja(models.Model):
     id_caja = models.AutoField(primary_key=True)
 
     id_usuario = models.ForeignKey(
-        Usuario,
+        settings.AUTH_USER_MODEL,
         on_delete=models.RESTRICT,
         db_column="id_usuario",
         related_name="cajas",
@@ -612,6 +787,9 @@ class Caja(models.Model):
         default=EstadoCaja.ABIERTA,
     )
 
+    def __str__(self):
+        return f"Caja {self.id_caja} - {self.fecha_apertura}"
+
     class Meta:
         db_table = "cajas"
         verbose_name = "Caja"
@@ -624,11 +802,23 @@ class Caja(models.Model):
                     | Q(fecha_cierre__isnull=False, saldo_final__isnull=False)
                 ),
                 name="chk_caja_cierre_saldo",
-            )
+            ),
+            models.CheckConstraint(
+                condition=(
+                    Q(estado_caja="Abierta", fecha_cierre__isnull=True)
+                    | Q(estado_caja="Cerrada", fecha_cierre__isnull=False)
+                ),
+                name="chk_caja_estado_fecha",
+            ),
+            models.CheckConstraint(
+                condition=Q(saldo_inicial__gte=0),
+                name="chk_caja_saldo_inicial_no_negativo",
+            ),
+            models.CheckConstraint(
+                condition=Q(saldo_final__isnull=True) | Q(saldo_final__gte=0),
+                name="chk_caja_saldo_final_no_negativo",
+            ),
         ]
-
-    def __str__(self):
-        return f"Caja {self.id_caja} - {self.fecha_apertura}"
 
 
 class MovCaja(models.Model):
@@ -645,7 +835,6 @@ class MovCaja(models.Model):
         TipoMovCaja,
         on_delete=models.RESTRICT,
         db_column="id_tipo_mov_caja",
-        related_name="movimientos",
     )
 
     id_venta = models.ForeignKey(
@@ -675,6 +864,9 @@ class MovCaja(models.Model):
     hora_mov_caja = models.TimeField()
     observacion_mov_caja = models.TextField(blank=True)
 
+    def __str__(self):
+        return f"Movimiento {self.id_mov_caja}"
+
     class Meta:
         db_table = "movs_caja"
         verbose_name = "Movimiento de Caja"
@@ -682,21 +874,19 @@ class MovCaja(models.Model):
         ordering = ["-hora_mov_caja"]
         constraints = [
             models.CheckConstraint(
-                condition=(
-                    Q(id_venta__isnull=True)
-                    | Q(id_compra__isnull=True)
-                ),
-                name="mov_caja_no_asociar_dos_operaciones",
-            )
+                condition=Q(id_venta__isnull=True) | Q(id_compra__isnull=True),
+                name="chk_mov_caja_venta_o_compra",
+            ),
+            models.CheckConstraint(
+                condition=Q(monto_mov_caja__gt=0),
+                name="chk_mov_caja_monto_positivo",
+            ),
         ]
 
-    def __str__(self):
-        return f"Movimiento {self.id_mov_caja}"
 
-
-# ==========================================================
-# MOVIMIENTOS DE INVENTARIO
-# ==========================================================
+# ============================================================
+# INVENTARIO
+# ============================================================
 
 class TipoMovInventario(models.Model):
     class Efecto(models.TextChoices):
@@ -712,19 +902,25 @@ class TipoMovInventario(models.Model):
         choices=Efecto.choices,
     )
 
+    def __str__(self):
+        return self.nombre_tipo_mov_inv
+
     class Meta:
         db_table = "tipos_mov_inventario"
         verbose_name = "Tipo de Movimiento de Inventario"
         verbose_name_plural = "Tipos de Movimiento de Inventario"
         ordering = ["nombre_tipo_mov_inv"]
 
-    def __str__(self):
-        return self.nombre_tipo_mov_inv
-
 
 class MovInventario(models.Model):
-    # Es el encabezado. Los productos y cantidades están en DetInventario.
     id_mov_inv = models.AutoField(primary_key=True)
+
+    id_usuario = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.RESTRICT,
+        db_column="id_usuario",
+        related_name="movimientos_inventario",
+    )
 
     id_tipo_mov_inv = models.ForeignKey(
         TipoMovInventario,
@@ -734,16 +930,16 @@ class MovInventario(models.Model):
     )
 
     observacion_mov_inv = models.TextField(blank=True)
-    fecha_mov_inv = models.DateField()
+    fecha_mov_inv = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"Movimiento Inventario {self.id_mov_inv}"
 
     class Meta:
         db_table = "movs_inventario"
         verbose_name = "Movimiento de Inventario"
         verbose_name_plural = "Movimientos de Inventario"
         ordering = ["-fecha_mov_inv"]
-
-    def __str__(self):
-        return f"Movimiento Inventario {self.id_mov_inv}"
 
 
 class DetInventario(models.Model):
@@ -766,11 +962,9 @@ class DetInventario(models.Model):
         Producto,
         on_delete=models.RESTRICT,
         db_column="id_producto",
-        related_name="detalles_inventario",
+        related_name="movimientos_inventario",
     )
 
-    # Se relaciona con la línea de venta o compra cuando corresponda.
-    # En un ajuste manual, ambas relaciones quedan vacías.
     id_det_venta = models.ForeignKey(
         DetVenta,
         on_delete=models.RESTRICT,
@@ -800,6 +994,9 @@ class DetInventario(models.Model):
         choices=EstadoItem.choices,
     )
 
+    def __str__(self):
+        return f"Detalle Inventario {self.id_det_inventario}"
+
     class Meta:
         db_table = "detalles_inventario"
         verbose_name = "Detalle de Inventario"
@@ -811,17 +1008,18 @@ class DetInventario(models.Model):
                     Q(id_det_venta__isnull=True)
                     | Q(id_det_compra__isnull=True)
                 ),
-                name="det_inv_no_asociar_venta_y_compra",
-            )
+                name="chk_det_inv_venta_o_compra",
+            ),
+            models.CheckConstraint(
+                condition=Q(cantidad_afectada__gt=0),
+                name="chk_det_inv_cantidad_positiva",
+            ),
         ]
 
-    def __str__(self):
-        return f"Detalle Inventario {self.id_det_inventario}"
 
-
-# ==========================================================
+# ============================================================
 # DEVOLUCIONES Y GARANTÍAS
-# ==========================================================
+# ============================================================
 
 class HistorialDevolucion(models.Model):
     class Estado(models.TextChoices):
@@ -839,15 +1037,6 @@ class HistorialDevolucion(models.Model):
         related_name="devolucion",
     )
 
-    id_det_venta = models.ForeignKey(
-        DetVenta,
-        on_delete=models.RESTRICT,
-        null=True,
-        blank=True,
-        db_column="id_det_venta",
-        related_name="devoluciones",
-    )
-
     motivo_devolucion = models.TextField()
     fecha_devolucion = models.DateField()
 
@@ -857,14 +1046,14 @@ class HistorialDevolucion(models.Model):
         default=Estado.PENDIENTE,
     )
 
+    def __str__(self):
+        return f"Devolución {self.id_devolucion}"
+
     class Meta:
         db_table = "historiales_devoluciones"
         verbose_name = "Historial de Devolución"
         verbose_name_plural = "Historiales de Devoluciones"
         ordering = ["-fecha_devolucion"]
-
-    def __str__(self):
-        return f"Devolución {self.id_devolucion}"
 
 
 class HistorialGarantia(models.Model):
@@ -892,11 +1081,11 @@ class HistorialGarantia(models.Model):
         default=Estado.PENDIENTE,
     )
 
+    def __str__(self):
+        return f"Garantía {self.id_garantia}"
+
     class Meta:
         db_table = "historiales_garantias"
         verbose_name = "Historial de Garantía"
         verbose_name_plural = "Historiales de Garantías"
         ordering = ["-fecha_reclamo"]
-
-    def __str__(self):
-        return f"Garantía {self.id_garantia}"

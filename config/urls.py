@@ -6,6 +6,7 @@ urlpatterns = [
     path("cuentas/", include("cuentas.urls")),
     path("catalogo/", include("catalogo.urls")),
     path("", include("inicio.urls")),
+    path("api/", include("api.urls")),
 ]
 admin.site.site_header = "Administración de la organización"
 admin.site.site_title = "Administración"
